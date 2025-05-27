@@ -1,0 +1,5 @@
+{
+  "modelId": "gpt-35-turbo",
+  "endpoint": "https://YOUR-AZURE-ENDPOINT.openai.azure.com/",
+  "apiKey": "YOUR-AZURE-OPENAI-API-KEY"
+}

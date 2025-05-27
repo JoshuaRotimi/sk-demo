@@ -1,0 +1,8 @@
+Evaluate the following customer information and assess their risk level:
+
+Name: {{name}}
+Country: {{country}}
+Recent Transactions: {{transactions}}
+Customer Bio: {{bio}}
+
+Return a risk level (Low, Medium, High) with a brief justification.

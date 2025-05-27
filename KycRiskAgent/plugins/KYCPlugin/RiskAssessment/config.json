@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "description": "Performs LLM-driven risk assessment based on customer activity.",
+  "type": "completion",
+  "completion": {
+    "max_tokens": 200,
+    "temperature": 0.7
+  },
+  "input_variables": [
+    {
+      "name": "name",
+      "description": "Customer's full name",
+      "required": true
+    },
+    {
+      "name": "country",
+      "description": "Customer's country of residence",
+      "required": true
+    },
+    {
+      "name": "transactions",
+      "description": "Summary of recent customer transactions",
+      "required": true
+    },
+    {
+      "name": "bio",
+      "description": "Customer biography and employment history",
+      "required": true
+    }
+  ]
+}
