@@ -1,52 +1,34 @@
-﻿using Microsoft.Extensions.Configuration;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
-using Plugins.KYCPlugin;
+﻿ using Microsoft.SemanticKernel;
+ using Microsoft.SemanticKernel.ChatCompletion;
+ using Microsoft.SemanticKernel.Connectors.OpenAI;
+ using Plugins.KYCPlugin;
+
+
+
+ using Microsoft.Extensions.Configuration;
 
 string filePath = Path.GetFullPath("appsettings.json");
-var config = new ConfigurationBuilder().AddJsonFile(filePath).Build();
+var config = new ConfigurationBuilder()
+.AddJsonFile(filePath)
+.Build();
 
+// Set your values in appsettings.json
 string modelId = config["modelId"]!;
 string endpoint = config["endpoint"]!;
 string apiKey = config["apiKey"]!;
 
-var builder = Kernel.CreateBuilder();
-builder.AddAzureOpenAIChatCompletion(modelId, endpoint, apiKey);
-var kernel = builder.Build();
+// Create a kernel builder with Azure OpenAI chat completion
+ var builder = Kernel.CreateBuilder();
+ builder.AddAzureOpenAIChatCompletion(modelId, endpoint, apiKey);
 
-// Load plugin
-var kycPlugin = kernel.CreatePluginFromPromptDirectory("Plugins/KycRiskPlugin");
+  // Build the kernel
+ var kernel = builder.Build();
 
-// Execution settings
-OpenAIPromptExecutionSettings settings = new()
-{
-    FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
-};
+ kernel.ImportPluginFromObject(new KYCPlugin(), "KYC");
 
-Console.WriteLine("KYC Risk Agent Ready\n");
+// Load prompt-based plugin
+kernel.ImportPluginFromPromptDirectory("plugins/KYCPlugin/RiskAssessment", "RiskAssessment");
 
-while (true)
-{
-    Console.Write("Enter customer name (or leave blank to exit): ");
-    string input = Console.ReadLine();
-    if (string.IsNullOrWhiteSpace(input)) break;
-
-    var docResult = await kernel.InvokeAsync(kycPlugin["validate_id_document"], new() { ["userInput"] = "Valid national ID with matching address" });
-    var sanctionsResult = await kernel.InvokeAsync(kycPlugin["screen_against_sanctions"], new() { ["userInput"] = input });
-    var behaviorResult = await kernel.InvokeAsync(kycPlugin["assess_behavioral_risk"], new() { ["userInput"] = "Normal login pattern, single region access" });
-
-    var finalResult = await kernel.InvokeAsync(kycPlugin["combine_risk_signals"], new()
-    {
-        ["docRisk"] = docResult.ToString(),
-        ["sanctionsRisk"] = sanctionsResult.ToString(),
-        ["behaviorRisk"] = behaviorResult.ToString()
-    });
-
-    Console.WriteLine("\nKYC Summary:");
-    Console.WriteLine($"📝 Document Check: {docResult}");
-    Console.WriteLine($"📋 Sanctions Check: {sanctionsResult}");
-    Console.WriteLine($"📊 Behavior Risk: {behaviorResult}");
-    Console.WriteLine($"➡ Final Verdict: {finalResult}\n");
-}
-
+  // Verify the endpoint and run a prompt
+var result = await kernel.InvokePromptAsync("Who are the top 5 most famous musicians in the world?");
+ Console.WriteLine(result);

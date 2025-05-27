@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("KycRiskAgent")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fe3490e90f7f7dd7db0c7e99ab50bad0b55f7e8f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1d061770425018525d68851504c4c0783ce8fd6e")]
 [assembly: System.Reflection.AssemblyProductAttribute("KycRiskAgent")]
 [assembly: System.Reflection.AssemblyTitleAttribute("KycRiskAgent")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
