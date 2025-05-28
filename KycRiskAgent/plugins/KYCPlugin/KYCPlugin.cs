@@ -1,27 +1,51 @@
-using System.ComponentModel;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using Microsoft.SemanticKernel;
-using System.Threading.Tasks;
+using System.ComponentModel;
 
 namespace Plugins.KYCPlugin
 {
     public class KYCPlugin
     {
-        [KernelFunction, Description("Validates a customer's national ID number format.")]
-        public string ValidateNationalID(
-            [Description("The national ID number")] string nationalId)
+        private List<decimal> transactionHistory = new() { 100, 105, 110, 120, 130, 200 }; // Example
+
+        [KernelFunction]
+        [Description("Check if a transaction amount is an anomaly")]
+        public string IsTransactionAmountAnomalous(string inputAmount)
         {
-            // Dummy validation logic
-            return nationalId.Length == 11 ? "Valid ID" : "Invalid ID";
+            if (!decimal.TryParse(inputAmount, out var currentAmount))
+                return "Invalid input";
+
+            var avg = transactionHistory.Average();
+            var stdDev = Math.Sqrt(transactionHistory.Select(x => Math.Pow((double)(x - avg), 2)).Sum() / transactionHistory.Count);
+
+            bool isAnomalous = Math.Abs(currentAmount - (decimal)avg) > (decimal)(2 * stdDev);
+            return isAnomalous ? "Yes, the amount is anomalous." : "No, the amount is within expected range.";
         }
 
-        [KernelFunction, Description("Checks if a customer exists in the fraud database.")]
-        public async Task<string> CheckFraudDatabaseAsync(
-            [Description("Customer full name")] string fullName)
+        [KernelFunction]
+        [Description("Check if a transaction is too frequent")]
+        public string IsFrequentTransfer(string timestampsJson)
         {
-            // Simulated API or database check
-            var flaggedNames = new[] { "John Doe", "Jane Fraud" };
-            await Task.Delay(100); // Simulate latency
-            return flaggedNames.Contains(fullName) ? "Flagged" : "Clear";
+            try
+            {
+                var timestamps = JsonSerializer.Deserialize<List<DateTime>>(timestampsJson);
+                timestamps.Sort();
+
+                for (int i = 0; i < timestamps.Count - 2; i++)
+                {
+                    if ((timestamps[i + 2] - timestamps[i]).TotalMinutes <= 5)
+                        return "Yes, 3 transfers within 5 minutes.";
+                }
+
+                return "No, transfer frequency is normal.";
+            }
+            catch
+            {
+                return "Invalid input format. Expecting a JSON array of timestamps.";
+            }
         }
     }
 }
