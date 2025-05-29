@@ -78,11 +78,13 @@ public class ChatRequest
 {
     public string Message { get; set; } = "";
     public string UserId { get; set; } = "default_user"; // In real app, get from auth
+    public string? SessionId { get; set; } // Added SessionId property
 }
 
 public class ChatResponse
 {
     public string Response { get; set; } = "";
+    public string? SessionId { get; set; } // Added SessionId property
     public TransactionRecord? ProcessedTransaction { get; set; }
     public List<string>? SecurityAlerts { get; set; }
 }
@@ -160,18 +162,16 @@ public class BankingService : IBankingService
         };
     }
 
-  // Just replace the system message in your existing ProcessChatAsync method:
-
-public async Task<ChatResponse> ProcessChatAsync(ChatRequest request)
-{
-    string sessionId = request.SessionId ?? Guid.NewGuid().ToString();
-    
-    if (!_chatSessions.ContainsKey(sessionId))
+    public async Task<ChatResponse> ProcessChatAsync(ChatRequest request)
     {
-        var history = new ChatHistory();
-        
-        // IMPROVED SYSTEM PROMPT - This is the key fix
-        history.AddSystemMessage(@"You are a smart banking assistant for John Doe's Access Bank account (2089893421) with current balance ₦2,500,000.
+        string sessionId = request.SessionId ?? Guid.NewGuid().ToString();
+
+        if (!_chatSessions.ContainsKey(sessionId))
+        {
+            var history = new ChatHistory();
+            
+            // IMPROVED SYSTEM PROMPT - This is the key fix
+            history.AddSystemMessage(@"You are a smart banking assistant for John Doe's Access Bank account (2089893421) with current balance ₦2,500,000.
 
 BEHAVIOR:
 - When user mentions transferring/sending money, IMMEDIATELY extract the details and process using the available plugins
@@ -189,37 +189,37 @@ You: 'Processing ₦500,000 transfer to Access Bank account 1234567890...' [then
 
 Always run security checks but present results naturally in conversation.");
 
-        _chatSessions[sessionId] = history;
-    }
+            _chatSessions[sessionId] = history;
+        }
 
-    var chatHistory = _chatSessions[sessionId];
-    chatHistory.AddUserMessage(request.Message);
+        var chatHistory = _chatSessions[sessionId];
+        chatHistory.AddUserMessage(request.Message);
 
-    try
-    {
-        var reply = await _chatService.GetChatMessageContentAsync(
-            chatHistory,
-            executionSettings: _executionSettings,
-            kernel: _kernel
-        );
-
-        chatHistory.AddAssistantMessage(reply.ToString());
-
-        return new ChatResponse
+        try
         {
-            Response = reply.ToString(),
-            SessionId = sessionId
-        };
-    }
-    catch (Exception ex)
-    {
-        return new ChatResponse
+            var reply = await _chatService.GetChatMessageContentAsync(
+                chatHistory,
+                executionSettings: _executionSettings,
+                kernel: _kernel
+            );
+
+            chatHistory.AddAssistantMessage(reply.ToString());
+
+            return new ChatResponse
+            {
+                Response = reply.ToString(),
+                SessionId = sessionId
+            };
+        }
+        catch (Exception ex)
         {
-            Response = $"I apologize, but I encountered an error: {ex.Message}",
-            SessionId = sessionId
-        };
+            return new ChatResponse
+            {
+                Response = $"I apologize, but I encountered an error: {ex.Message}",
+                SessionId = sessionId
+            };
+        }
     }
-}
 
     public async Task<UserAccount> GetUserAccountAsync(string userId)
     {
