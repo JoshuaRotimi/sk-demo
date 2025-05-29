@@ -12,9 +12,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Configure Semantic Kernel
-string modelId = builder.Configuration["OpenAI:ModelId"] ?? "gpt-4o-mini";
-string endpoint = builder.Configuration["OpenAI:Endpoint"] ?? "https://risk-assessment.openai.azure.com/";
-string apiKey = builder.Configuration["OpenAI:ApiKey"] ?? "4fw8eyhy4yU23LTZN7K5wtPpSyFjvZT2D3yZd9ZQlw42lEjmi4PhJQQJ99BEACYeBjFXJ3w3AAABACOGvNSr";
+string modelId = builder.Configuration["OpenAI:ModelId"];
+string endpoint = builder.Configuration["OpenAI:Endpoint"];
+string apiKey = builder.Configuration["OpenAI:ApiKey"];
 
 // Register Semantic Kernel as a singleton
 builder.Services.AddSingleton<Kernel>(serviceProvider =>
