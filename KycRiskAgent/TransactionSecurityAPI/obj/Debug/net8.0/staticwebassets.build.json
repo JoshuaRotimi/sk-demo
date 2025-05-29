@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "jro1rUuc/YFEuPs88bESlcfG/qKm31ltSEtwYDVDCYM=",
+  "Source": "TransactionSecurityAPI",
+  "BasePath": "_content/TransactionSecurityAPI",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
