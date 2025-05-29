@@ -20,4 +20,4 @@ env/
 # mypy
 .mypy_cache/
 .dmypy.json
-dmypy.json
+dmypy.jsonKycRiskAgent/TransactionSecurityAPI/appsettings.json
