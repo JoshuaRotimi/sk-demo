@@ -160,69 +160,66 @@ public class BankingService : IBankingService
         };
     }
 
-    public async Task<ChatResponse> ProcessChatAsync(ChatRequest request)
-    {
-        // Get user account context
-        var userAccount = await _accountService.GetUserAccountAsync(request.UserId);
-        
-        if (!_chatSessions.ContainsKey(request.UserId))
-        {
-            var history = new ChatHistory();
-            history.AddSystemMessage($@"You are {userAccount.FullName}'s personal banking assistant for {userAccount.BankName}.
+  // Just replace the system message in your existing ProcessChatAsync method:
 
-CONTEXT:
-- User's Account: {userAccount.AccountNumber} 
-- Current Balance: ₦{userAccount.Balance:N0}
-- Bank: {userAccount.BankName}
+public async Task<ChatResponse> ProcessChatAsync(ChatRequest request)
+{
+    string sessionId = request.SessionId ?? Guid.NewGuid().ToString();
+    
+    if (!_chatSessions.ContainsKey(sessionId))
+    {
+        var history = new ChatHistory();
+        
+        // IMPROVED SYSTEM PROMPT - This is the key fix
+        history.AddSystemMessage(@"You are a smart banking assistant for John Doe's Access Bank account (2089893421) with current balance ₦2,500,000.
 
 BEHAVIOR:
-- Be conversational and helpful
-- When user mentions sending money, IMMEDIATELY process it using the TransactionProcessor plugin
-- Extract recipient bank and account from natural language (e.g., ""GTBank 0123456789"" or ""Access Bank account 2089893421"")
-- Don't ask for information you can infer or that's already provided
-- If amount/recipient is clear, process immediately
-- Only ask clarifying questions if truly ambiguous
-- Always run security checks but present results conversationally
+- When user mentions transferring/sending money, IMMEDIATELY extract the details and process using the available plugins
+- Parse recipient info from natural language (e.g., 'Ahmed Musa GTBank 3344558767' = GTBank, account 3344558767)
+- Don't ask for information you can extract from their message
+- Use plugins to run security checks automatically
+- Be conversational and helpful, not robotic
 
 EXAMPLES:
-User: ""Send 50k to GTBank 0123456789""
-You: ""Processing your transfer of ₦50,000 to GTBank account 0123456789..."" [then use plugin]
+User: 'Send 60k to Ahmed Musa GTBank 3344558767'
+You: 'I'll process your transfer of ₦60,000 to GTBank account 3344558767 for Ahmed Musa...' [then call TransactionClassifier and other plugins]
 
-User: ""I want to send money to my friend""  
-You: ""I'd be happy to help! Which bank and what account number should I send to, and how much?""");
+User: 'Transfer 500000 to Access Bank 1234567890'  
+You: 'Processing ₦500,000 transfer to Access Bank account 1234567890...' [then use plugins]
 
-            _chatSessions[request.UserId] = history;
-        }
+Always run security checks but present results naturally in conversation.");
 
-        var chatHistory = _chatSessions[request.UserId];
-        chatHistory.AddUserMessage(request.Message);
-
-        try
-        {
-            // Set user context for plugins
-            _kernel.Data["CurrentUser"] = userAccount;
-
-            var reply = await _chatService.GetChatMessageContentAsync(
-                chatHistory,
-                executionSettings: _executionSettings,
-                kernel: _kernel
-            );
-
-            chatHistory.AddAssistantMessage(reply.ToString());
-
-            return new ChatResponse
-            {
-                Response = reply.ToString()
-            };
-        }
-        catch (Exception ex)
-        {
-            return new ChatResponse
-            {
-                Response = $"I apologize, but I encountered an error: {ex.Message}"
-            };
-        }
+        _chatSessions[sessionId] = history;
     }
+
+    var chatHistory = _chatSessions[sessionId];
+    chatHistory.AddUserMessage(request.Message);
+
+    try
+    {
+        var reply = await _chatService.GetChatMessageContentAsync(
+            chatHistory,
+            executionSettings: _executionSettings,
+            kernel: _kernel
+        );
+
+        chatHistory.AddAssistantMessage(reply.ToString());
+
+        return new ChatResponse
+        {
+            Response = reply.ToString(),
+            SessionId = sessionId
+        };
+    }
+    catch (Exception ex)
+    {
+        return new ChatResponse
+        {
+            Response = $"I apologize, but I encountered an error: {ex.Message}",
+            SessionId = sessionId
+        };
+    }
+}
 
     public async Task<UserAccount> GetUserAccountAsync(string userId)
     {
