@@ -49,6 +49,7 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Configure for Codespaces
+app.Urls.Add("http://0.0.0.0:8080");
 app.Run("http://0.0.0.0:5000");
 
 // ===== API MODELS =====
