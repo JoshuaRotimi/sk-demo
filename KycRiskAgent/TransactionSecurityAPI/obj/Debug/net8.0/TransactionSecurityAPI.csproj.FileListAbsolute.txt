@@ -7,7 +7,6 @@
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/obj/Debug/net8.0/TransactionSecurityAPI.MvcApplicationPartsAssemblyInfo.cache
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/obj/Debug/net8.0/TransactionSecurityAPI.sourcelink.json
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/bin/Debug/net8.0/appsettings.Development.json
-/workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/bin/Debug/net8.0/appsettings.json
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/bin/Debug/net8.0/TransactionSecurityAPI
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/bin/Debug/net8.0/TransactionSecurityAPI.deps.json
 /workspaces/sk-demo/KycRiskAgent/TransactionSecurityAPI/bin/Debug/net8.0/TransactionSecurityAPI.runtimeconfig.json

@@ -3,6 +3,7 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System.ComponentModel;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,16 +25,15 @@ builder.Services.AddSingleton<Kernel>(serviceProvider =>
     var kernel = kernelBuilder.Build();
     
     // Add all plugins
-    kernel.ImportPluginFromType<TransactionClassifierPlugin>();
-    kernel.ImportPluginFromType<FraudDetectionPlugin>();
-    kernel.ImportPluginFromType<KYCPlugin>();
-    kernel.ImportPluginFromType<VelocityCheckPlugin>();
+    kernel.ImportPluginFromType<TransactionProcessorPlugin>();
+    kernel.ImportPluginFromType<AccountManagerPlugin>();
     
     return kernel;
 });
 
-// Register transaction service
-builder.Services.AddSingleton<ITransactionSecurityService, TransactionSecurityService>();
+// Register services
+builder.Services.AddSingleton<IBankingService, BankingService>();
+builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
 
 var app = builder.Build();
 
@@ -48,74 +48,55 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
 
-// Configure for Codespaces
 app.Urls.Add("http://0.0.0.0:8080");
 app.Run("http://0.0.0.0:5000");
 
-// ===== API MODELS =====
-public class TransactionRequest
+// ===== MODELS =====
+public class UserAccount
 {
-    public string Bank { get; set; } = "";
+    public string UserId { get; set; } = "";
     public string AccountNumber { get; set; } = "";
+    public string BankName { get; set; } = "";
+    public string FullName { get; set; } = "";
+    public decimal Balance { get; set; }
+    public List<TransactionRecord> TransactionHistory { get; set; } = new();
+}
+
+public class TransactionRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string ToBank { get; set; } = "";
+    public string ToAccount { get; set; } = "";
     public decimal Amount { get; set; }
-    public string Description { get; set; } = "";
-    public string UserMessage { get; set; } = "";
-}
-
-public class TransactionResponse
-{
-    public bool IsAllowed { get; set; }
-    public string Classification { get; set; } = "";
-    public List<SecurityCheckResult> SecurityChecks { get; set; } = new();
-    public string Message { get; set; } = "";
-    public string AssistantResponse { get; set; } = "";
-}
-
-public class SecurityCheckResult
-{
-    public string CheckName { get; set; } = "";
+    public DateTime Timestamp { get; set; } = DateTime.Now;
     public string Status { get; set; } = "";
-    public string Details { get; set; } = "";
-    public bool IsBlocking { get; set; }
+    public string Description { get; set; } = "";
+    public List<string> SecurityFlags { get; set; } = new();
 }
 
 public class ChatRequest
 {
     public string Message { get; set; } = "";
-    public string? SessionId { get; set; }
+    public string UserId { get; set; } = "default_user"; // In real app, get from auth
 }
 
 public class ChatResponse
 {
     public string Response { get; set; } = "";
-    public string SessionId { get; set; } = "";
-    public List<SecurityCheckResult>? SecurityChecks { get; set; }
+    public TransactionRecord? ProcessedTransaction { get; set; }
+    public List<string>? SecurityAlerts { get; set; }
 }
 
-// ===== API CONTROLLER =====
+// ===== CONTROLLER =====
 [ApiController]
 [Route("api/[controller]")]
-public class TransactionController : ControllerBase
+public class BankingController : ControllerBase
 {
-    private readonly ITransactionSecurityService _transactionService;
+    private readonly IBankingService _bankingService;
 
-    public TransactionController(ITransactionSecurityService transactionService)
+    public BankingController(IBankingService bankingService)
     {
-        _transactionService = transactionService;
-    }
-
-    [HttpPost("validate")]
-    public async Task<ActionResult<TransactionResponse>> ValidateTransaction([FromBody] TransactionRequest request)
-    {
-        try
-        {
-            var response = await _transactionService.ValidateTransactionAsync(request);
-            return Ok(response);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
+        _bankingService = bankingService;
     }
 
     [HttpPost("chat")]
@@ -123,7 +104,7 @@ public class TransactionController : ControllerBase
     {
         try
         {
-            var response = await _transactionService.ProcessChatAsync(request);
+            var response = await _bankingService.ProcessChatAsync(request);
             return Ok(response);
         }
         catch (Exception ex)
@@ -132,125 +113,95 @@ public class TransactionController : ControllerBase
         }
     }
 
-    [HttpGet("health")]
-    public IActionResult Health()
+    [HttpGet("account/{userId}")]
+    public async Task<ActionResult<UserAccount>> GetAccount(string userId)
     {
-        return Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
+        try
+        {
+            var account = await _bankingService.GetUserAccountAsync(userId);
+            return Ok(account);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 }
 
-// ===== SERVICE LAYER =====
-public interface ITransactionSecurityService
+// ===== SERVICES =====
+public interface IBankingService
 {
-    Task<TransactionResponse> ValidateTransactionAsync(TransactionRequest request);
     Task<ChatResponse> ProcessChatAsync(ChatRequest request);
+    Task<UserAccount> GetUserAccountAsync(string userId);
 }
 
-public class TransactionSecurityService : ITransactionSecurityService
+public interface IUserAccountService
+{
+    Task<UserAccount> GetUserAccountAsync(string userId);
+    Task<bool> UpdateAccountAsync(UserAccount account);
+}
+
+public class BankingService : IBankingService
 {
     private readonly Kernel _kernel;
     private readonly IChatCompletionService _chatService;
+    private readonly IUserAccountService _accountService;
     private readonly OpenAIPromptExecutionSettings _executionSettings;
     private static readonly Dictionary<string, ChatHistory> _chatSessions = new();
 
-    public TransactionSecurityService(Kernel kernel)
+    public BankingService(Kernel kernel, IUserAccountService accountService)
     {
         _kernel = kernel;
         _chatService = kernel.GetRequiredService<IChatCompletionService>();
+        _accountService = accountService;
         _executionSettings = new OpenAIPromptExecutionSettings
         {
             FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
         };
     }
 
-    public async Task<TransactionResponse> ValidateTransactionAsync(TransactionRequest request)
-    {
-        var response = new TransactionResponse();
-        var securityChecks = new List<SecurityCheckResult>();
-
-        try
-        {
-            // Run all security checks using direct plugin method calls
-            var classifierPlugin = new TransactionClassifierPlugin();
-            var classificationResult = await classifierPlugin.ClassifyTransaction(
-                request.Bank, request.AccountNumber, request.Amount);
-            securityChecks.Add(new SecurityCheckResult
-            {
-                CheckName = "TransactionClassifier",
-                Status = classificationResult.Contains("BLOCKED") ? "BLOCKED" : "PASSED",
-                Details = classificationResult,
-                IsBlocking = classificationResult.Contains("BLOCKED")
-            });
-
-            var fraudPlugin = new FraudDetectionPlugin();
-            var fraudResult = fraudPlugin.CheckFraudPatterns(
-                request.Bank, request.AccountNumber, request.Amount);
-            securityChecks.Add(new SecurityCheckResult
-            {
-                CheckName = "FraudDetection",
-                Status = fraudResult.Contains("ALERT") ? "BLOCKED" : "PASSED",
-                Details = fraudResult,
-                IsBlocking = fraudResult.Contains("ALERT")
-            });
-
-            var kycPlugin = new KYCPlugin();
-            var kycResult = kycPlugin.PerformKYCCheck(request.Amount, request.AccountNumber);
-            securityChecks.Add(new SecurityCheckResult
-            {
-                CheckName = "KYC",
-                Status = kycResult.Contains("REQUIRED") ? "WARNING" : "PASSED",
-                Details = kycResult,
-                IsBlocking = false // KYC is informational, not blocking
-            });
-
-            var velocityPlugin = new VelocityCheckPlugin();
-            var velocityResult = velocityPlugin.CheckTransactionVelocity(
-                request.AccountNumber, request.Amount);
-            securityChecks.Add(new SecurityCheckResult
-            {
-                CheckName = "VelocityCheck",
-                Status = velocityResult.Contains("EXCEEDED") ? "BLOCKED" : "PASSED",
-                Details = velocityResult,
-                IsBlocking = velocityResult.Contains("EXCEEDED")
-            });
-
-            // Determine overall result
-            bool hasBlockingIssues = securityChecks.Any(c => c.IsBlocking);
-            string classification = ExtractClassification(classificationResult);
-
-            response.IsAllowed = !hasBlockingIssues && classification != "Abnormal";
-            response.Classification = classification;
-            response.SecurityChecks = securityChecks;
-            response.Message = response.IsAllowed 
-                ? $"Transaction approved: ₦{request.Amount:N0} to {request.Bank}"
-                : "Transaction blocked due to security concerns";
-
-            return response;
-        }
-        catch (Exception ex)
-        {
-            response.IsAllowed = false;
-            response.Message = $"Error during validation: {ex.Message}";
-            return response;
-        }
-    }
-
     public async Task<ChatResponse> ProcessChatAsync(ChatRequest request)
     {
-        string sessionId = request.SessionId ?? Guid.NewGuid().ToString();
+        // Get user account context
+        var userAccount = await _accountService.GetUserAccountAsync(request.UserId);
         
-        if (!_chatSessions.ContainsKey(sessionId))
+        if (!_chatSessions.ContainsKey(request.UserId))
         {
             var history = new ChatHistory();
-            history.AddSystemMessage("You are a banking security assistant. Help users process transactions safely by running appropriate security checks. Ask for transaction details when needed: bank, account number, amount, and any other relevant information.");
-            _chatSessions[sessionId] = history;
+            history.AddSystemMessage($@"You are {userAccount.FullName}'s personal banking assistant for {userAccount.BankName}.
+
+CONTEXT:
+- User's Account: {userAccount.AccountNumber} 
+- Current Balance: ₦{userAccount.Balance:N0}
+- Bank: {userAccount.BankName}
+
+BEHAVIOR:
+- Be conversational and helpful
+- When user mentions sending money, IMMEDIATELY process it using the TransactionProcessor plugin
+- Extract recipient bank and account from natural language (e.g., ""GTBank 0123456789"" or ""Access Bank account 2089893421"")
+- Don't ask for information you can infer or that's already provided
+- If amount/recipient is clear, process immediately
+- Only ask clarifying questions if truly ambiguous
+- Always run security checks but present results conversationally
+
+EXAMPLES:
+User: ""Send 50k to GTBank 0123456789""
+You: ""Processing your transfer of ₦50,000 to GTBank account 0123456789..."" [then use plugin]
+
+User: ""I want to send money to my friend""  
+You: ""I'd be happy to help! Which bank and what account number should I send to, and how much?""");
+
+            _chatSessions[request.UserId] = history;
         }
 
-        var chatHistory = _chatSessions[sessionId];
+        var chatHistory = _chatSessions[request.UserId];
         chatHistory.AddUserMessage(request.Message);
 
         try
         {
+            // Set user context for plugins
+            _kernel.Data["CurrentUser"] = userAccount;
+
             var reply = await _chatService.GetChatMessageContentAsync(
                 chatHistory,
                 executionSettings: _executionSettings,
@@ -261,153 +212,204 @@ public class TransactionSecurityService : ITransactionSecurityService
 
             return new ChatResponse
             {
-                Response = reply.ToString(),
-                SessionId = sessionId
+                Response = reply.ToString()
             };
         }
         catch (Exception ex)
         {
             return new ChatResponse
             {
-                Response = $"I apologize, but I encountered an error: {ex.Message}",
-                SessionId = sessionId
+                Response = $"I apologize, but I encountered an error: {ex.Message}"
             };
         }
     }
 
-    private string ExtractClassification(string details)
+    public async Task<UserAccount> GetUserAccountAsync(string userId)
     {
-        if (details.Contains("Abnormal")) return "Abnormal";
-        if (details.Contains("New")) return "New";
-        return "Normal";
+        return await _accountService.GetUserAccountAsync(userId);
     }
 }
 
-// ===== PLUGIN CLASSES =====
-public class TransactionRecord
+public class UserAccountService : IUserAccountService
 {
-    public string Bank { get; set; } = "";
-    public string AccountNumber { get; set; } = "";
-    public decimal Amount { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string Classification { get; set; } = "";
-    public bool IsBlocked { get; set; }
+    // In-memory storage for demo - use database in production
+    private static readonly Dictionary<string, UserAccount> _accounts = new()
+    {
+        ["default_user"] = new UserAccount
+        {
+            UserId = "default_user",
+            AccountNumber = "2089893421",
+            BankName = "Access Bank",
+            FullName = "John Doe",
+            Balance = 2500000,
+            TransactionHistory = new List<TransactionRecord>
+            {
+                new() { ToBank = "GTBank", ToAccount = "0123456789", Amount = 25000, 
+                       Timestamp = DateTime.Now.AddDays(-2), Status = "Completed" },
+                new() { ToBank = "UBA", ToAccount = "1111111111", Amount = 100000, 
+                       Timestamp = DateTime.Now.AddDays(-5), Status = "Completed" }
+            }
+        }
+    };
+
+    public async Task<UserAccount> GetUserAccountAsync(string userId)
+    {
+        await Task.Delay(1); // Simulate async
+        return _accounts.GetValueOrDefault(userId) ?? throw new Exception("User not found");
+    }
+
+    public async Task<bool> UpdateAccountAsync(UserAccount account)
+    {
+        await Task.Delay(1);
+        _accounts[account.UserId] = account;
+        return true;
+    }
 }
 
-public class TransactionClassifierPlugin
+// ===== SMART PLUGINS =====
+public class TransactionProcessorPlugin
 {
-    private static readonly List<TransactionRecord> _history = new();
-
-    [KernelFunction, Description("Classify a transaction as Normal, New, or Abnormal based on amount and history")]
-    public async Task<string> ClassifyTransaction(
-        [Description("Bank name")] string bank,
-        [Description("Account number")] string accountNumber,
-        [Description("Transaction amount in Naira")] decimal amount)
+    [KernelFunction, Description("Process a money transfer with automatic security checks")]
+    public async Task<string> ProcessTransfer(
+        [Description("Recipient bank name (e.g., GTBank, Access Bank, UBA)")] string recipientBank,
+        [Description("Recipient account number")] string recipientAccount,
+        [Description("Transfer amount in Naira")] decimal amount,
+        [Description("Optional description or purpose")] string description = "")
     {
-        await Task.Delay(1); // Make it async
+        var kernel = KernelProvider.GetKernel();
+        var currentUser = (UserAccount)kernel.Data["CurrentUser"];
         
-        int sameAmountCount = _history.Count(t => t.Amount == amount);
-        
-        string classification;
-        if (amount >= 1000000 || sameAmountCount >= 3)
+        // Run all security checks
+        var securityResults = new List<string>();
+        var isBlocked = false;
+
+        // 1. Classification check
+        var classification = ClassifyTransaction(amount, currentUser.TransactionHistory);
+        securityResults.Add($"Classification: {classification}");
+        if (classification == "BLOCKED") isBlocked = true;
+
+        // 2. Fraud detection
+        var fraudCheck = CheckFraud(recipientBank, recipientAccount, amount);
+        securityResults.Add($"Fraud Check: {fraudCheck}");
+        if (fraudCheck.Contains("BLOCKED")) isBlocked = true;
+
+        // 3. Balance check
+        if (amount > currentUser.Balance)
         {
-            classification = "Abnormal";
-        }
-        else if (amount >= 500000)
-        {
-            classification = "New";
+            securityResults.Add("Balance Check: INSUFFICIENT FUNDS");
+            isBlocked = true;
         }
         else
         {
-            classification = "Normal";
+            securityResults.Add("Balance Check: SUFFICIENT");
         }
 
+        // 4. Velocity check
+        var velocityCheck = CheckVelocity(currentUser.TransactionHistory);
+        securityResults.Add($"Velocity Check: {velocityCheck}");
+        if (velocityCheck.Contains("EXCEEDED")) isBlocked = true;
+
+        if (isBlocked)
+        {
+            return $"❌ **Transaction Blocked**\n\n" +
+                   $"Transfer of ₦{amount:N0} to {recipientBank} ({recipientAccount}) cannot be processed.\n\n" +
+                   $"**Security Checks:**\n{string.Join("\n", securityResults.Select(r => $"• {r}"))}";
+        }
+
+        // Process successful transaction
         var transaction = new TransactionRecord
         {
-            Bank = bank,
-            AccountNumber = accountNumber,
+            ToBank = recipientBank,
+            ToAccount = recipientAccount,
             Amount = amount,
-            Timestamp = DateTime.Now,
-            Classification = classification,
-            IsBlocked = classification == "Abnormal"
+            Status = "Completed",
+            Description = description,
+            SecurityFlags = securityResults
         };
-        
-        if (classification != "Abnormal")
-        {
-            _history.Add(transaction);
-        }
 
-        return $"Transaction classified as: {classification}. " +
-               (classification == "Abnormal" ? "BLOCKED" : "ALLOWED") +
-               $" - ₦{amount:N0} to {bank} ({accountNumber})";
+        currentUser.TransactionHistory.Add(transaction);
+        currentUser.Balance -= amount;
+
+        var kycWarning = amount >= 500000 ? "\n\n⚠️ **KYC Notice:** This transaction may require additional verification due to the amount." : "";
+
+        return $"✅ **Transfer Successful**\n\n" +
+               $"₦{amount:N0} sent to {recipientBank} account {recipientAccount}\n" +
+               $"New balance: ₦{currentUser.Balance:N0}\n" +
+               $"Transaction ID: {transaction.Id.Substring(0, 8)}" +
+               kycWarning;
     }
-}
 
-public class FraudDetectionPlugin
-{
-    [KernelFunction, Description("Check for potential fraud patterns in transaction")]
-    public string CheckFraudPatterns(
-        [Description("Bank name")] string bank,
-        [Description("Account number")] string accountNumber,
-        [Description("Transaction amount")] decimal amount)
+    private string ClassifyTransaction(decimal amount, List<TransactionRecord> history)
     {
-        var riskFactors = new List<string>();
+        if (amount >= 1000000) return "BLOCKED (Excessive amount)";
+        
+        var sameAmountCount = history.Count(t => t.Amount == amount && 
+                                                t.Timestamp > DateTime.Now.AddDays(-30));
+        if (sameAmountCount >= 3) return "BLOCKED (Repeated amount pattern)";
+        
+        if (amount >= 500000) return "HIGH VALUE";
+        return "NORMAL";
+    }
+
+    private string CheckFraud(string bank, string account, decimal amount)
+    {
+        if (string.IsNullOrWhiteSpace(bank) || bank.ToLower().Contains("unknown"))
+            return "BLOCKED (Invalid bank)";
+        
+        if (account.Length != 10 || !account.All(char.IsDigit))
+            return "BLOCKED (Invalid account format)";
         
         if (amount % 1000 == 0 && amount > 50000)
-            riskFactors.Add("Round number large amount");
+            return "WARNING (Round amount pattern)";
         
-        if (bank.ToLower().Contains("unknown") || string.IsNullOrEmpty(bank))
-            riskFactors.Add("Unknown bank");
-            
-        if (accountNumber.Length != 10)
-            riskFactors.Add("Invalid account number format");
+        return "PASSED";
+    }
 
-        if (riskFactors.Any())
-            return $"FRAUD ALERT: {string.Join(", ", riskFactors)}";
-        
-        return "No fraud patterns detected";
+    private string CheckVelocity(List<TransactionRecord> history)
+    {
+        var recentTransactions = history.Count(t => t.Timestamp > DateTime.Now.AddHours(-1));
+        if (recentTransactions >= 5) return "EXCEEDED (Too many recent transactions)";
+        return $"PASSED ({recentTransactions}/5 hourly limit)";
     }
 }
 
-public class KYCPlugin
+public class AccountManagerPlugin
 {
-    [KernelFunction, Description("Perform KYC verification for high-value transactions")]
-    public string PerformKYCCheck(
-        [Description("Transaction amount")] decimal amount,
-        [Description("Account number")] string accountNumber)
+    [KernelFunction, Description("Get current account balance and recent transactions")]
+    public async Task<string> GetAccountSummary()
     {
-        if (amount >= 500000)
-        {
-            return $"KYC REQUIRED: Transaction amount ₦{amount:N0} requires identity verification. " +
-                   "Please provide additional documentation.";
-        }
+        await Task.Delay(1);
+        var kernel = KernelProvider.GetKernel();
+        var currentUser = (UserAccount)kernel.Data["CurrentUser"];
         
-        return "KYC verification not required for this transaction amount";
-    }
-}
-
-public class VelocityCheckPlugin
-{
-    private static readonly Dictionary<string, List<DateTime>> _accountActivity = new();
-
-    [KernelFunction, Description("Check transaction velocity limits")]
-    public string CheckTransactionVelocity(
-        [Description("Account number")] string accountNumber,
-        [Description("Transaction amount")] decimal amount)
-    {
-        if (!_accountActivity.ContainsKey(accountNumber))
-            _accountActivity[accountNumber] = new List<DateTime>();
-
-        var recentTransactions = _accountActivity[accountNumber]
-            .Where(t => t > DateTime.Now.AddHours(-1))
+        var recentTransactions = currentUser.TransactionHistory
+            .OrderByDescending(t => t.Timestamp)
+            .Take(3)
             .ToList();
 
-        if (recentTransactions.Count >= 5)
+        var summary = $"**Account Summary for {currentUser.FullName}**\n\n" +
+                     $"💰 Current Balance: ₦{currentUser.Balance:N0}\n" +
+                     $"🏦 Bank: {currentUser.BankName}\n" +
+                     $"📱 Account: {currentUser.AccountNumber}\n\n";
+
+        if (recentTransactions.Any())
         {
-            return "VELOCITY LIMIT EXCEEDED: Too many transactions in the last hour. Please wait.";
+            summary += "**Recent Transactions:**\n";
+            foreach (var tx in recentTransactions)
+            {
+                summary += $"• ₦{tx.Amount:N0} to {tx.ToBank} - {tx.Timestamp:MMM dd}\n";
+            }
         }
 
-        _accountActivity[accountNumber].Add(DateTime.Now);
-        return $"Velocity check passed. {recentTransactions.Count + 1} transactions in last hour.";
+        return summary;
     }
+}
+
+// Helper class to access kernel in plugins
+public static class KernelProvider
+{
+    private static Kernel? _kernel;
+    
+    public static void SetKernel(Kernel kernel) => _kernel = kernel;
+    public static Kernel GetKernel() => _kernel ?? throw new InvalidOperationException("Kernel not set");
 }
