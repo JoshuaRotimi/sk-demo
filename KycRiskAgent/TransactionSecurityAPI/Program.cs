@@ -273,17 +273,19 @@ public class TransactionProcessorPlugin
         [Description("Transfer amount in Naira")] decimal amount,
         [Description("Optional description or purpose")] string description = "")
     {
-        var kernel = KernelProvider.GetKernel();
-        var currentUser = (UserAccount)kernel.Data["CurrentUser"];
-        
-        // Run all security checks
-        var securityResults = new List<string>();
-        var isBlocked = false;
+        try
+        {
+            var kernel = KernelProvider.GetKernel();
+            var currentUser = (UserAccount)kernel.Data["CurrentUser"];
 
-        // 1. Classification check
-        var classification = ClassifyTransaction(amount, currentUser.TransactionHistory);
-        securityResults.Add($"Classification: {classification}");
-        if (classification == "BLOCKED") isBlocked = true;
+            // Run all security checks
+            var securityResults = new List<string>();
+            var isBlocked = false;
+
+            // 1. Classification check
+            var classification = ClassifyTransaction(amount, currentUser.TransactionHistory);
+            securityResults.Add($"Classification: {classification}");
+            if (classification == "BLOCKED") isBlocked = true;
 
         // 2. Fraud detection
         var fraudCheck = CheckFraud(recipientBank, recipientAccount, amount);
@@ -304,46 +306,52 @@ public class TransactionProcessorPlugin
         // 4. Velocity check
         var velocityCheck = CheckVelocity(currentUser.TransactionHistory);
         securityResults.Add($"Velocity Check: {velocityCheck}");
-        if (velocityCheck.Contains("EXCEEDED")) isBlocked = true;
+            if (velocityCheck.Contains("EXCEEDED")) isBlocked = true;
 
-        if (isBlocked)
-        {
-            return $"❌ **Transaction Blocked**\n\n" +
-                   $"Transfer of ₦{amount:N0} to {recipientBank} ({recipientAccount}) cannot be processed.\n\n" +
-                   $"**Security Checks:**\n{string.Join("\n", securityResults.Select(r => $"• {r}"))}";
+            if (isBlocked)
+            {
+                return $"❌ **Transaction Blocked**\n\n" +
+                       $"Transfer of ₦{amount:N0} to {recipientBank} ({recipientAccount}) cannot be processed.\n\n" +
+                       $"**Security Checks:**\n{string.Join("\n", securityResults.Select(r => $"• {r}"))}";
+            }
+
+            // Process successful transaction
+            var transaction = new TransactionRecord
+            {
+                ToBank = recipientBank,
+                ToAccount = recipientAccount,
+                Amount = amount,
+                Status = "Completed",
+                Description = description,
+                SecurityFlags = securityResults
+            };
+
+            currentUser.TransactionHistory.Add(transaction);
+            currentUser.Balance -= amount;
+
+            var kycWarning = amount >= 500000 ? "\n\n⚠️ **KYC Notice:** This transaction may require additional verification due to the amount." : "";
+
+            return $"✅ **Transfer Successful**\n\n" +
+                   $"₦{amount:N0} sent to {recipientBank} account {recipientAccount}\n" +
+                   $"New balance: ₦{currentUser.Balance:N0}\n" +
+                   $"Transaction ID: {transaction.Id.Substring(0, 8)}" +
+                   kycWarning;
         }
-
-        // Process successful transaction
-        var transaction = new TransactionRecord
+        catch (Exception ex)
         {
-            ToBank = recipientBank,
-            ToAccount = recipientAccount,
-            Amount = amount,
-            Status = "Completed",
-            Description = description,
-            SecurityFlags = securityResults
-        };
-
-        currentUser.TransactionHistory.Add(transaction);
-        currentUser.Balance -= amount;
-
-        var kycWarning = amount >= 500000 ? "\n\n⚠️ **KYC Notice:** This transaction may require additional verification due to the amount." : "";
-
-        return $"✅ **Transfer Successful**\n\n" +
-               $"₦{amount:N0} sent to {recipientBank} account {recipientAccount}\n" +
-               $"New balance: ₦{currentUser.Balance:N0}\n" +
-               $"Transaction ID: {transaction.Id.Substring(0, 8)}" +
-               kycWarning;
+            return $"❌ **Transaction Failed**\n\n" +
+                   $"An error occurred while processing the transaction: {ex.Message}";
+        }
     }
 
     private string ClassifyTransaction(decimal amount, List<TransactionRecord> history)
     {
         if (amount >= 1000000) return "BLOCKED (Excessive amount)";
-        
-        var sameAmountCount = history.Count(t => t.Amount == amount && 
-                                                t.Timestamp > DateTime.Now.AddDays(-30));
+
+        var sameAmountCount = history.Count(t => t.Amount == amount &&
+                                                    t.Timestamp > DateTime.Now.AddDays(-30));
         if (sameAmountCount >= 3) return "BLOCKED (Repeated amount pattern)";
-        
+
         if (amount >= 500000) return "HIGH VALUE";
         return "NORMAL";
     }
@@ -352,13 +360,13 @@ public class TransactionProcessorPlugin
     {
         if (string.IsNullOrWhiteSpace(bank) || bank.ToLower().Contains("unknown"))
             return "BLOCKED (Invalid bank)";
-        
+
         if (account.Length != 10 || !account.All(char.IsDigit))
             return "BLOCKED (Invalid account format)";
-        
+
         if (amount % 1000 == 0 && amount > 50000)
             return "WARNING (Round amount pattern)";
-        
+
         return "PASSED";
     }
 
@@ -375,30 +383,38 @@ public class AccountManagerPlugin
     [KernelFunction, Description("Get current account balance and recent transactions")]
     public async Task<string> GetAccountSummary()
     {
-        await Task.Delay(1);
-        var kernel = KernelProvider.GetKernel();
-        var currentUser = (UserAccount)kernel.Data["CurrentUser"];
-        
-        var recentTransactions = currentUser.TransactionHistory
-            .OrderByDescending(t => t.Timestamp)
-            .Take(3)
-            .ToList();
-
-        var summary = $"**Account Summary for {currentUser.FullName}**\n\n" +
-                     $"💰 Current Balance: ₦{currentUser.Balance:N0}\n" +
-                     $"🏦 Bank: {currentUser.BankName}\n" +
-                     $"📱 Account: {currentUser.AccountNumber}\n\n";
-
-        if (recentTransactions.Any())
+        try
         {
-            summary += "**Recent Transactions:**\n";
-            foreach (var tx in recentTransactions)
-            {
-                summary += $"• ₦{tx.Amount:N0} to {tx.ToBank} - {tx.Timestamp:MMM dd}\n";
-            }
-        }
+            await Task.Delay(1);
+            var kernel = KernelProvider.GetKernel();
+            var currentUser = (UserAccount)kernel.Data["CurrentUser"];
 
-        return summary;
+            var recentTransactions = currentUser.TransactionHistory
+                .OrderByDescending(t => t.Timestamp)
+                .Take(3)
+                .ToList();
+
+            var summary = $"**Account Summary for {currentUser.FullName}**\n\n" +
+                         $"💰 Current Balance: ₦{currentUser.Balance:N0}\n" +
+                         $"🏦 Bank: {currentUser.BankName}\n" +
+                         $"📱 Account: {currentUser.AccountNumber}\n\n";
+
+            if (recentTransactions.Any())
+            {
+                summary += "**Recent Transactions:**\n";
+                foreach (var tx in recentTransactions)
+                {
+                    summary += $"• ₦{tx.Amount:N0} to {tx.ToBank} - {tx.Timestamp:MMM dd}\n";
+                }
+            }
+
+            return summary;
+        }
+        catch (Exception ex)
+        {
+            return $"❌ **Account Summary Failed**\n\n" +
+                   $"An error occurred while retrieving the account summary: {ex.Message}";
+        }
     }
 }
 
