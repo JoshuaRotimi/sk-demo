@@ -197,6 +197,10 @@ Always run security checks but present results naturally in conversation.");
 
         try
         {
+            var userAccount = await _accountService.GetUserAccountAsync(request.UserId);
+            KernelProvider.SetKernel(_kernel);
+            _kernel.Data["CurrentUser"] = userAccount;
+
             var reply = await _chatService.GetChatMessageContentAsync(
                 chatHistory,
                 executionSettings: _executionSettings,
@@ -205,11 +209,19 @@ Always run security checks but present results naturally in conversation.");
 
             chatHistory.AddAssistantMessage(reply.ToString());
 
-            return new ChatResponse
+            var chatResponse = new ChatResponse
             {
                 Response = reply.ToString(),
                 SessionId = sessionId
             };
+
+            // Check if the response contains a transaction result
+            if (reply.ToString().Contains("Transfer Successful") || reply.ToString().Contains("Transaction Blocked") || reply.ToString().Contains("Transaction Failed"))
+            {
+                chatResponse.Response = reply.ToString();
+            }
+
+            return chatResponse;
         }
         catch (Exception ex)
         {
